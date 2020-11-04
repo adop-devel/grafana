@@ -4,7 +4,6 @@
 # Responsible for retrieving SQL databases directory from the Amazon Athena AWS, and storing them
 # in temporary databases within ec2. This script will then modify those databases and create tables which will be
 # easier for grafana to interpret and convert into visuals.
-
 import re
 import os
 import socket
@@ -14,23 +13,26 @@ from collections import Counter
 from datetime import datetime
 import mysql.connector
 
-# For timestamps dealing with hourly2
+# For timestamps dealing with hourly2, unused due to long querry times even when querrying by hour
 now = datetime.now()
 year = now.strftime("%Y")
 month = now.strftime("%m")
 day = now.strftime("%d")
 hour = now.strftime("%H")
 
-# This cursor is for running querries on the AWS Athena Server
+# This cursor is for running querries on the AWS Athena Server, PrestoDB based
 aCursor = connect(aws_access_key_id='', #This is where you put you access key ID
                   aws_secret_access_key='', #This is where you put your secret access key
                   s3_staging_dir='', #This is where your s3 url is
                   region_name='ap-northeast-2').cursor()
-# Will retrieve the first 10000 entries of the required columns, then closes the connection
+
+# Will retrieve the first 10000 entries of the required columns, then closes the connection, until a better method is found which doesn't end up timing out connection
+# Edit these lines if you need a new datapoint. 
+
 print("Connected")
 hourlyQuerry = "SELECT zid, acid, dev, dt, ip, brow, os, loc, lang, title, w, h, ctry, net FROM \"basic\".\"hourly2\" WHERE year='" + year + "' AND month='" + month + "' AND day = '" + day + "' AND HOUR = '" + hour + "';"
 tempHourly = "SELECT zid, acid, dev, dt, ip, brow, os, loc, lang, title, w, h, ctry, net FROM \"basic\".\"hourly2\" limit 10000;"
-aCursor.execute(tempHourly)  # acid
+aCursor.execute(tempHourly)
 allResults = aCursor.fetchall()
 print("hourly data retrieved")
 aCursor.execute(
@@ -38,6 +40,7 @@ aCursor.execute(
 eResults = aCursor.fetchall()
 aCursor.close()
 print("report_daily data retrieved")
+
 # This cursor is for running querries on the ec2 mysql Server
 serverDB = mysql.connector.connect(
     host="localhost",
@@ -66,9 +69,9 @@ totalImpress INT(20) NOT NULL, clicks INT(20), earning DEC(12, 2), exrate DEC(10
 loctablecreate = """CREATE TABLE IF NOT EXISTS loctable(ip VARCHAR(20), longitude DECIMAL(12,8), latitude DECIMAL(12,8));"""
 print("connected to local database")
 
-sCursor.execute(tablecreation)
-sCursor.execute(etablecreate)
-sCursor.execute(loctablecreate)
+sCursor.execute(tablecreation) # For general statistics
+sCursor.execute(etablecreate) # Earnings and web traffic statistics
+sCursor.execute(loctablecreate) # For the map visual
 
 # inserts the values retrieved by the athena querry into the database
 valueInsertPlace = """INSERT IGNORE INTO mtable(keyZID, keyACID, device, aTime, ip, browser, OS, website,
@@ -79,7 +82,7 @@ sCursor.executemany(valueInsertPlace, allResults)
 sCursor.executemany(evalInsertion, eResults)
 print("entries inserted into local databases")
 
-# miscellanius updating
+# miscellaneous updating
 sCursor.execute("UPDATE mtable SET formTime = STR_TO_DATE(aTime, '%Y%m%d%H%i%s');")
 sCursor.execute("UPDATE etable SET formDate = STR_TO_DATE(rawDate, '%Y-%m-%d');")
 sCursor.execute("UPDATE mtable SET formWidth = CONVERT(width, UNSIGNED);")
@@ -88,6 +91,7 @@ sCursor.execute("UPDATE mtable SET language = SUBSTRING(language,1,2);")
 sCursor.execute("SHOW WARNINGS;")
 print("Did conversions")
 
+#Responsible for converting ip addresses from users into specific geo location data lattitude and longitude
 sCursor.execute("SELECT ip FROM mtable;")
 iplists = sCursor.fetchall()
 ipformatlist = []
